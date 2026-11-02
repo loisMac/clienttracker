@@ -175,6 +175,23 @@
   font-weight: 600;
 }
 
+.account-strip {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.8rem;
+  border: 1px solid var(--border);
+  background: #fffefa;
+  border-radius: 0.8rem;
+  padding: 0.62rem 0.8rem;
+}
+
+.account-strip p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #495466;
+}
+
 .panel {
   border: 1px solid var(--border);
   border-radius: 1rem;
@@ -281,6 +298,13 @@
   gap: 0.7rem;
   align-items: end;
   margin-bottom: 1rem;
+}
+
+.section-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  margin-bottom: 0.8rem;
 }
 
 .quick-tools {
@@ -456,11 +480,31 @@ button:focus-visible {
   font-size: 0.82rem;
   border: 1px solid #e1d9cb;
   border-radius: 0.58rem;
-  padding: 0.46rem 0.55rem;
+  padding: 0.5rem 0.55rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.session-main {
   display: flex;
   justify-content: space-between;
   gap: 0.5rem;
   align-items: center;
+}
+
+.session-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.session-edit {
+  border: 1px dashed #cfbeb0;
+  border-radius: 0.55rem;
+  padding: 0.5rem;
+  background: #fffdfa;
+  display: grid;
+  gap: 0.45rem;
 }
 
 .badge {
@@ -542,6 +586,16 @@ button:focus-visible {
   display: block;
   margin-top: 0.2rem;
   color: var(--muted);
+}
+
+.online-edit {
+  border: 1px dashed #d7ccbd;
+  border-radius: 0.6rem;
+  padding: 0.55rem;
+  margin-top: 0.5rem;
+  background: #fffdf9;
+  display: grid;
+  gap: 0.5rem;
 }
 
 .empty {
@@ -652,6 +706,11 @@ button:focus-visible {
 
   .stat-grid {
     grid-template-columns: 1fr;
+  }
+
+  .account-strip {
+    flex-direction: column;
+    align-items: flex-start;
   }
 
   .attention-strip {

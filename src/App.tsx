@@ -53,6 +53,20 @@ type CloudHistoryItem = {
   payload: AppState
 }
 
+type EditingBankSession = {
+  clientId: string
+  sessionId: string
+  bankedOn: string
+  usedOn: string
+}
+
+type EditingOnlineClient = {
+  id: string
+  name: string
+  lastCallOn: string
+  notes: string
+}
+
 const STORAGE_KEY = 'clienttracker.app.v1'
 const SNAPSHOT_STORAGE_KEY = 'clienttracker.backups.v1'
 const SNAPSHOT_VERSION = 1
@@ -253,6 +267,9 @@ function App() {
   const [message, setMessage] = useState('')
   const [authMode, setAuthMode] = useState<AuthMode>('password')
   const [showAdvancedAuth, setShowAdvancedAuth] = useState(false)
+  const [showAccountPanel, setShowAccountPanel] = useState(false)
+  const [showAddClientForm, setShowAddClientForm] = useState(false)
+  const [showBulkAddForm, setShowBulkAddForm] = useState(false)
   const [cloudEmail, setCloudEmail] = useState('')
   const [cloudPassword, setCloudPassword] = useState('')
   const [cloudConfirmPassword, setCloudConfirmPassword] = useState('')
@@ -267,6 +284,9 @@ function App() {
   const [lastCloudSyncAt, setLastCloudSyncAt] = useState<string | null>(null)
   const [historyItems, setHistoryItems] = useState<CloudHistoryItem[]>([])
   const [isOnline, setIsOnline] = useState<boolean>(window.navigator.onLine)
+  const [editingBankSession, setEditingBankSession] = useState<EditingBankSession | null>(null)
+  const [editingOnlineClient, setEditingOnlineClient] =
+    useState<EditingOnlineClient | null>(null)
   const backupImportRef = useRef<HTMLInputElement>(null)
   const lastHistoryDateRef = useRef<string>('')
 
@@ -612,6 +632,34 @@ function App() {
     return items
   }, [state.inPersonClients, state.onlineClients])
 
+  const accountSummary = useMemo(() => {
+    if (!isSupabaseConfigured) {
+      return 'Cloud backup not configured'
+    }
+
+    if (!isOnline) {
+      return 'Offline right now'
+    }
+
+    if (!cloudUserEmail) {
+      return 'Not signed in'
+    }
+
+    if (cloudSaveState === 'saving') {
+      return 'Saving to cloud...'
+    }
+
+    if (cloudSaveState === 'saved') {
+      return `Signed in as ${cloudUserEmail}`
+    }
+
+    if (cloudSaveState === 'error') {
+      return 'Cloud sync issue'
+    }
+
+    return `Signed in as ${cloudUserEmail}`
+  }, [cloudSaveState, cloudUserEmail, isOnline])
+
   useEffect(() => {
     if (!quickClientId) {
       return
@@ -910,6 +958,109 @@ function App() {
     bankSession(quickClientId, todayIso())
   }
 
+  const startEditingBankSession = (clientId: string, session: BankedSession) => {
+    setEditingBankSession({
+      clientId,
+      sessionId: session.id,
+      bankedOn: session.bankedOn,
+      usedOn: session.usedOn ?? '',
+    })
+  }
+
+  const saveEditingBankSession = () => {
+    if (!editingBankSession) {
+      return
+    }
+
+    if (!editingBankSession.bankedOn) {
+      setMessage('Banked date is required.')
+      return
+    }
+
+    setState((current) => ({
+      ...current,
+      inPersonClients: current.inPersonClients.map((client) => {
+        if (client.id !== editingBankSession.clientId) {
+          return client
+        }
+
+        return {
+          ...client,
+          bankedSessions: client.bankedSessions.map((session) =>
+            session.id === editingBankSession.sessionId
+              ? {
+                  ...session,
+                  bankedOn: editingBankSession.bankedOn,
+                  expiresOn: addMonths(editingBankSession.bankedOn, 3),
+                  usedOn: editingBankSession.usedOn || undefined,
+                }
+              : session,
+          ),
+        }
+      }),
+    }))
+
+    setEditingBankSession(null)
+    setMessage('Banked session updated')
+  }
+
+  const deleteBankSession = (clientId: string, sessionId: string) => {
+    if (!window.confirm('Delete this banked session?')) {
+      return
+    }
+
+    setState((current) => ({
+      ...current,
+      inPersonClients: current.inPersonClients.map((client) =>
+        client.id === clientId
+          ? {
+              ...client,
+              bankedSessions: client.bankedSessions.filter((session) => session.id !== sessionId),
+            }
+          : client,
+      ),
+    }))
+    setMessage('Banked session deleted')
+  }
+
+  const startEditingOnlineClient = (client: OnlineClient) => {
+    setEditingOnlineClient({
+      id: client.id,
+      name: client.name,
+      lastCallOn: client.lastCallOn,
+      notes: client.notes,
+    })
+  }
+
+  const saveEditingOnlineClient = () => {
+    if (!editingOnlineClient) {
+      return
+    }
+
+    const name = editingOnlineClient.name.trim()
+    if (!name) {
+      setMessage('Client name cannot be empty.')
+      return
+    }
+
+    setState((current) => ({
+      ...current,
+      onlineClients: current.onlineClients.map((client) =>
+        client.id === editingOnlineClient.id
+          ? {
+              ...client,
+              name,
+              lastCallOn: editingOnlineClient.lastCallOn,
+              notes: editingOnlineClient.notes.trim(),
+            }
+          : client,
+      ),
+    }))
+
+    setEditingOnlineClient(null)
+    setMessage('Online client updated')
+  }
+
   const sendMagicLink = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
 
@@ -1173,7 +1324,21 @@ function App() {
         {cloudSaveError ? <span className="save-error">{cloudSaveError}</span> : null}
       </section>
 
-      <section className="panel">
+      <section className="account-strip" aria-label="Account strip">
+        <p>
+          Account: <strong>{accountSummary}</strong>
+        </p>
+        <button
+          type="button"
+          className="ghost small"
+          onClick={() => setShowAccountPanel((value) => !value)}
+        >
+          {showAccountPanel ? 'Hide account options' : 'Login and backup options'}
+        </button>
+      </section>
+
+      {showAccountPanel ? (
+        <section className="panel">
         <div className="panel-header">
           <h2>Login and backups</h2>
           <p>
@@ -1357,7 +1522,8 @@ function App() {
             </p>
           </div>
         )}
-      </section>
+        </section>
+      ) : null}
 
       <section className="panel">
         <div className="panel-header">
@@ -1368,18 +1534,47 @@ function App() {
           </p>
         </div>
 
-        <form className="inline-form" onSubmit={addInPersonClient}>
-          <label>
-            Client name
-            <input
-              value={inPersonName}
-              onChange={(event) => setInPersonName(event.target.value)}
-              placeholder="e.g. Sarah Dean"
-              required
-            />
-          </label>
-          <button type="submit">Add in-person client</button>
-        </form>
+        <div className="section-actions">
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => {
+              setShowAddClientForm((value) => !value)
+              if (showBulkAddForm) {
+                setShowBulkAddForm(false)
+              }
+            }}
+          >
+            {showAddClientForm ? 'Hide add client' : 'Add new client'}
+          </button>
+          <button
+            type="button"
+            className="ghost"
+            onClick={() => {
+              setShowBulkAddForm((value) => !value)
+              if (showAddClientForm) {
+                setShowAddClientForm(false)
+              }
+            }}
+          >
+            {showBulkAddForm ? 'Hide bulk add' : 'Add multiple clients'}
+          </button>
+        </div>
+
+        {showAddClientForm ? (
+          <form className="inline-form" onSubmit={addInPersonClient}>
+            <label>
+              Client name
+              <input
+                value={inPersonName}
+                onChange={(event) => setInPersonName(event.target.value)}
+                placeholder="e.g. Sarah Dean"
+                required
+              />
+            </label>
+            <button type="submit">Save client</button>
+          </form>
+        ) : null}
 
         <div className="quick-tools">
           <label>
@@ -1401,19 +1596,21 @@ function App() {
           </button>
         </div>
 
-        <div className="bulk-add">
-          <label>
-            Bulk add in-person clients (one per line)
-            <textarea
-              value={bulkInPersonNames}
-              onChange={(event) => setBulkInPersonNames(event.target.value)}
-              placeholder={`Amy\nJordan\nMegan`}
-            />
-          </label>
-          <button type="button" className="ghost" onClick={addBulkInPersonClients}>
-            Add all names
-          </button>
-        </div>
+        {showBulkAddForm ? (
+          <div className="bulk-add">
+            <label>
+              Bulk add in-person clients (one per line)
+              <textarea
+                value={bulkInPersonNames}
+                onChange={(event) => setBulkInPersonNames(event.target.value)}
+                placeholder={`Amy\nJordan\nMegan`}
+              />
+            </label>
+            <button type="button" className="ghost" onClick={addBulkInPersonClients}>
+              Add all names
+            </button>
+          </div>
+        ) : null}
 
         <div className="client-grid">
           {state.inPersonClients.length === 0 ? (
@@ -1498,27 +1695,95 @@ function App() {
                         .sort((a, b) => a.bankedOn.localeCompare(b.bankedOn))
                         .map((session) => {
                           const expired = !session.usedOn && isExpired(session.expiresOn)
+                          const isEditingSession =
+                            editingBankSession?.clientId === client.id &&
+                            editingBankSession?.sessionId === session.id
+
                           return (
                             <li key={session.id}>
-                              <span>
-                                Banked {formatDate(session.bankedOn)} - expires{' '}
-                                {formatDate(session.expiresOn)}
-                              </span>
-                              <strong
-                                className={
-                                  session.usedOn
-                                    ? 'badge success'
+                              <div className="session-main">
+                                <span>
+                                  Banked {formatDate(session.bankedOn)} - expires{' '}
+                                  {formatDate(session.expiresOn)}
+                                </span>
+                                <strong
+                                  className={
+                                    session.usedOn
+                                      ? 'badge success'
+                                      : expired
+                                        ? 'badge danger'
+                                        : 'badge neutral'
+                                  }
+                                >
+                                  {session.usedOn
+                                    ? `Used ${formatDate(session.usedOn)}`
                                     : expired
-                                      ? 'badge danger'
-                                      : 'badge neutral'
-                                }
-                              >
-                                {session.usedOn
-                                  ? `Used ${formatDate(session.usedOn)}`
-                                  : expired
-                                    ? 'Expired'
-                                    : 'Available'}
-                              </strong>
+                                      ? 'Expired'
+                                      : 'Available'}
+                                </strong>
+                              </div>
+
+                              <div className="session-actions">
+                                <button
+                                  type="button"
+                                  className="ghost small"
+                                  onClick={() => startEditingBankSession(client.id, session)}
+                                >
+                                  Edit
+                                </button>
+                                <button
+                                  type="button"
+                                  className="ghost small"
+                                  onClick={() => deleteBankSession(client.id, session.id)}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+
+                              {isEditingSession ? (
+                                <div className="session-edit">
+                                  <label>
+                                    Banked on
+                                    <input
+                                      type="date"
+                                      value={editingBankSession.bankedOn}
+                                      onChange={(event) =>
+                                        setEditingBankSession((current) =>
+                                          current
+                                            ? { ...current, bankedOn: event.target.value }
+                                            : current,
+                                        )
+                                      }
+                                    />
+                                  </label>
+                                  <label>
+                                    Used on (optional)
+                                    <input
+                                      type="date"
+                                      value={editingBankSession.usedOn}
+                                      onChange={(event) =>
+                                        setEditingBankSession((current) =>
+                                          current
+                                            ? { ...current, usedOn: event.target.value }
+                                            : current,
+                                        )
+                                      }
+                                    />
+                                  </label>
+                                  <div className="button-row">
+                                    <button type="button" className="ghost small" onClick={saveEditingBankSession}>
+                                      Save
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="ghost small"
+                                      onClick={() => setEditingBankSession(null)}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : null}
                             </li>
                           )
                         })}
@@ -1604,32 +1869,96 @@ function App() {
                         </span>
                       ) : null}
                     </h3>
-                    <button
-                      type="button"
-                      className="ghost small"
-                      onClick={() => removeOnlineClient(client.id)}
-                    >
-                      Remove
-                    </button>
+                    <div className="button-row">
+                      <button
+                        type="button"
+                        className="ghost small"
+                        onClick={() => startEditingOnlineClient(client)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost small"
+                        onClick={() => removeOnlineClient(client.id)}
+                      >
+                        Remove
+                      </button>
+                    </div>
                   </div>
 
-                  <p className="mini-stats">
-                    Last call: <strong>{formatDate(client.lastCallOn)}</strong> | Next due:{' '}
-                    <strong>{formatDate(nextDue)}</strong>
-                  </p>
+                  {editingOnlineClient?.id === client.id ? (
+                    <div className="online-edit">
+                      <label>
+                        Name
+                        <input
+                          value={editingOnlineClient.name}
+                          onChange={(event) =>
+                            setEditingOnlineClient((current) =>
+                              current ? { ...current, name: event.target.value } : current,
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        Last call date
+                        <input
+                          type="date"
+                          value={editingOnlineClient.lastCallOn}
+                          onChange={(event) =>
+                            setEditingOnlineClient((current) =>
+                              current
+                                ? { ...current, lastCallOn: event.target.value }
+                                : current,
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        Notes
+                        <input
+                          value={editingOnlineClient.notes}
+                          onChange={(event) =>
+                            setEditingOnlineClient((current) =>
+                              current ? { ...current, notes: event.target.value } : current,
+                            )
+                          }
+                        />
+                      </label>
+                      <div className="button-row">
+                        <button type="button" className="ghost small" onClick={saveEditingOnlineClient}>
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          className="ghost small"
+                          onClick={() => setEditingOnlineClient(null)}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <p className="mini-stats">
+                        Last call: <strong>{formatDate(client.lastCallOn)}</strong> | Next due:{' '}
+                        <strong>{formatDate(nextDue)}</strong>
+                      </p>
 
-                  <p className="notes">{client.notes || 'No notes yet.'}</p>
+                      <p className="notes">{client.notes || 'No notes yet.'}</p>
 
-                  <div className="button-row">
-                    <button
-                      type="button"
-                      className="ghost"
-                      onClick={() => markOnlineCallDone(client.id)}
-                    >
-                      Call done today
-                    </button>
-                    <span className={statusClass}>{statusText}</span>
-                  </div>
+                      <div className="button-row">
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={() => markOnlineCallDone(client.id)}
+                        >
+                          Call done today
+                        </button>
+                        <span className={statusClass}>{statusText}</span>
+                      </div>
+                    </>
+                  )}
                 </article>
               )
             })
