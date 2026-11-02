@@ -459,14 +459,21 @@ button:focus-visible {
 
 .banking-row {
   margin: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.6rem;
   align-items: end;
 }
 
 .banking-row label {
-  max-width: 260px;
+  flex: 1 1 220px;
+  min-width: 0;
+  max-width: 320px;
+}
+
+.banking-row button {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .button-row {
@@ -703,7 +710,15 @@ button:focus-visible {
   }
 
   .banking-row {
-    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .banking-row label {
+    max-width: none;
+  }
+
+  .banking-row button {
+    white-space: normal;
   }
 
   .stat-grid {
