@@ -334,8 +334,7 @@
   font: inherit;
 }
 
-.online-form,
-.schedule-form {
+.online-form {
   grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
 }
 
@@ -542,50 +541,15 @@ button:focus-visible {
   color: #2f6a50;
 }
 
-.week-grid {
-  display: grid;
-  gap: 0.85rem;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.archived-block {
+  margin-top: 0.95rem;
+  border-top: 1px dashed #d8d0c4;
+  padding-top: 0.85rem;
 }
 
-.day-column {
-  border: 1px solid var(--border);
-  border-radius: 0.9rem;
-  background: linear-gradient(180deg, #ffffff 0%, #fcfaf7 100%);
-  padding: 0.8rem;
-}
-
-.day-column h3 {
-  margin: 0 0 0.6rem;
-}
-
-.day-column ul {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-  display: grid;
-  gap: 0.5rem;
-}
-
-.day-column li {
-  border: 1px solid #e1d9ca;
-  border-radius: 0.6rem;
-  background: #ffffff;
-  padding: 0.5rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: start;
-  gap: 0.6rem;
-}
-
-.day-column p {
-  margin: 0.2rem 0 0;
-}
-
-.day-column small {
-  display: block;
-  margin-top: 0.2rem;
-  color: var(--muted);
+.archived-card {
+  opacity: 0.9;
+  background: linear-gradient(180deg, #fefdfb 0%, #f8f4ee 100%);
 }
 
 .online-edit {
@@ -672,14 +636,9 @@ button:focus-visible {
   }
 
   .online-form,
-  .schedule-form,
   .auth-form,
   .quick-tools {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .week-grid {
-    grid-template-columns: 1fr;
   }
 }
 
@@ -697,7 +656,6 @@ button:focus-visible {
 
   .inline-form,
   .online-form,
-  .schedule-form,
   .cloud-form,
   .auth-form,
   .quick-tools {

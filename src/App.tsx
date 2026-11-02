@@ -3,8 +3,6 @@ import type { ChangeEvent, FormEvent } from 'react'
 import './App.css'
 import { isSupabaseConfigured, supabase } from './lib/supabase'
 
-type DayOfWork = 'Tuesday' | 'Friday'
-
 type BankedSession = {
   id: string
   bankedOn: string
@@ -16,6 +14,7 @@ type InPersonClient = {
   id: string
   name: string
   bankedSessions: BankedSession[]
+  archived?: boolean
 }
 
 type OnlineClient = {
@@ -23,20 +22,12 @@ type OnlineClient = {
   name: string
   lastCallOn: string
   notes: string
-}
-
-type ScheduleEntry = {
-  id: string
-  clientName: string
-  day: DayOfWork
-  time: string
-  notes: string
+  archived?: boolean
 }
 
 type AppState = {
   inPersonClients: InPersonClient[]
   onlineClients: OnlineClient[]
-  schedule: ScheduleEntry[]
 }
 
 type BackupFile = {
@@ -81,7 +72,6 @@ const OWNER_EMAIL = (import.meta.env.VITE_OWNER_EMAIL as string | undefined)
 const initialState: AppState = {
   inPersonClients: [],
   onlineClients: [],
-  schedule: [],
 }
 
 const todayIso = () => new Date().toISOString().slice(0, 10)
@@ -160,7 +150,8 @@ const isInPersonClient = (value: unknown): value is InPersonClient => {
     typeof value.id === 'string' &&
     typeof value.name === 'string' &&
     Array.isArray(value.bankedSessions) &&
-    value.bankedSessions.every(isBankedSession)
+    value.bankedSessions.every(isBankedSession) &&
+    (value.archived === undefined || typeof value.archived === 'boolean')
   )
 }
 
@@ -173,21 +164,8 @@ const isOnlineClient = (value: unknown): value is OnlineClient => {
     typeof value.id === 'string' &&
     typeof value.name === 'string' &&
     typeof value.lastCallOn === 'string' &&
-    typeof value.notes === 'string'
-  )
-}
-
-const isScheduleEntry = (value: unknown): value is ScheduleEntry => {
-  if (!isRecord(value)) {
-    return false
-  }
-
-  return (
-    typeof value.id === 'string' &&
-    typeof value.clientName === 'string' &&
-    (value.day === 'Tuesday' || value.day === 'Friday') &&
-    typeof value.time === 'string' &&
-    typeof value.notes === 'string'
+    typeof value.notes === 'string' &&
+    (value.archived === undefined || typeof value.archived === 'boolean')
   )
 }
 
@@ -200,10 +178,26 @@ const isAppState = (value: unknown): value is AppState => {
     Array.isArray(value.inPersonClients) &&
     value.inPersonClients.every(isInPersonClient) &&
     Array.isArray(value.onlineClients) &&
-    value.onlineClients.every(isOnlineClient) &&
-    Array.isArray(value.schedule) &&
-    value.schedule.every(isScheduleEntry)
+    value.onlineClients.every(isOnlineClient)
   )
+}
+
+const normalizeState = (value: AppState): AppState => {
+  return {
+    inPersonClients: value.inPersonClients.map((client) => ({
+      ...client,
+      archived: Boolean(client.archived),
+    })),
+    onlineClients: value.onlineClients.map((client) => ({
+      ...client,
+      archived: Boolean(client.archived),
+    })),
+  }
+}
+
+const requireTypedConfirmation = (actionLabel: string, phrase: string) => {
+  const input = window.prompt(`Type ${phrase} to ${actionLabel}.`)
+  return input === phrase
 }
 
 const loadInitialState = (): AppState => {
@@ -214,7 +208,7 @@ const loadInitialState = (): AppState => {
 
   try {
     const parsed = JSON.parse(saved) as unknown
-    return isAppState(parsed) ? parsed : initialState
+    return isAppState(parsed) ? normalizeState(parsed) : initialState
   } catch {
     return initialState
   }
@@ -257,10 +251,6 @@ function App() {
   const [onlineName, setOnlineName] = useState('')
   const [onlineLastCallOn, setOnlineLastCallOn] = useState(todayIso())
   const [onlineNotes, setOnlineNotes] = useState('')
-  const [scheduleClientName, setScheduleClientName] = useState('')
-  const [scheduleDay, setScheduleDay] = useState<DayOfWork>('Tuesday')
-  const [scheduleTime, setScheduleTime] = useState('09:00')
-  const [scheduleNotes, setScheduleNotes] = useState('')
   const [bankDateByClient, setBankDateByClient] = useState<Record<string, string>>({})
   const [bulkInPersonNames, setBulkInPersonNames] = useState('')
   const [quickClientId, setQuickClientId] = useState('')
@@ -283,6 +273,7 @@ function App() {
   const [lastLocalSaveAt, setLastLocalSaveAt] = useState<string | null>(null)
   const [lastCloudSyncAt, setLastCloudSyncAt] = useState<string | null>(null)
   const [historyItems, setHistoryItems] = useState<CloudHistoryItem[]>([])
+  const [selectedHistoryId, setSelectedHistoryId] = useState('')
   const [isOnline, setIsOnline] = useState<boolean>(window.navigator.onLine)
   const [editingBankSession, setEditingBankSession] = useState<EditingBankSession | null>(null)
   const [editingOnlineClient, setEditingOnlineClient] =
@@ -365,7 +356,7 @@ function App() {
 
     const payload = data?.payload as unknown
     if (payload && isAppState(payload)) {
-      setState(payload)
+      setState(normalizeState(payload))
       setMessage('Loaded latest cloud backup')
     }
 
@@ -423,7 +414,7 @@ function App() {
       return
     }
 
-    setState(item.payload)
+    setState(normalizeState(item.payload))
     setMessage('Cloud restore point loaded')
   }
 
@@ -545,12 +536,13 @@ function App() {
   }, [state, cloudReadyForSync, cloudUserId])
 
   const bankedOverview = useMemo(() => {
-    const allSessions = state.inPersonClients.flatMap((client) =>
+    const allSessions = state.inPersonClients
+      .filter((client) => !client.archived)
+      .flatMap((client) =>
       client.bankedSessions.map((session) => ({
         ...session,
         clientName: client.name,
-      })),
-    )
+      })))
 
     const available = allSessions.filter(
       (session) => !session.usedOn && !isExpired(session.expiresOn),
@@ -572,11 +564,13 @@ function App() {
   }, [state.inPersonClients])
 
   const onlineOverview = useMemo(() => {
-    const due = state.onlineClients.filter((client) => {
+    const activeOnlineClients = state.onlineClients.filter((client) => !client.archived)
+
+    const due = activeOnlineClients.filter((client) => {
       const dueOn = addMonths(client.lastCallOn, 1)
       return daysUntil(dueOn) <= 7
     })
-    const overdue = state.onlineClients.filter((client) => {
+    const overdue = activeOnlineClients.filter((client) => {
       const dueOn = addMonths(client.lastCallOn, 1)
       return daysUntil(dueOn) < 0
     })
@@ -587,21 +581,12 @@ function App() {
     }
   }, [state.onlineClients])
 
-  const groupedSchedule = useMemo(() => {
-    const tuesday = state.schedule
-      .filter((entry) => entry.day === 'Tuesday')
-      .sort((a, b) => a.time.localeCompare(b.time))
-    const friday = state.schedule
-      .filter((entry) => entry.day === 'Friday')
-      .sort((a, b) => a.time.localeCompare(b.time))
-
-    return { Tuesday: tuesday, Friday: friday }
-  }, [state.schedule])
-
   const attentionItems = useMemo(() => {
     const items: Array<{ id: string; text: string }> = []
 
-    state.inPersonClients.forEach((client) => {
+    state.inPersonClients
+      .filter((client) => !client.archived)
+      .forEach((client) => {
       const expiredCount = client.bankedSessions.filter(
         (session) => !session.usedOn && isExpired(session.expiresOn),
       ).length
@@ -614,9 +599,9 @@ function App() {
           }`,
         })
       }
-    })
+      })
 
-    state.onlineClients.forEach((client) => {
+    state.onlineClients.filter((client) => !client.archived).forEach((client) => {
       const nextDue = addMonths(client.lastCallOn, 1)
       const overdueDays = Math.abs(daysUntil(nextDue))
       if (daysUntil(nextDue) < 0) {
@@ -631,6 +616,26 @@ function App() {
 
     return items
   }, [state.inPersonClients, state.onlineClients])
+
+  const activeInPersonClients = useMemo(
+    () => state.inPersonClients.filter((client) => !client.archived),
+    [state.inPersonClients],
+  )
+
+  const archivedInPersonClients = useMemo(
+    () => state.inPersonClients.filter((client) => client.archived),
+    [state.inPersonClients],
+  )
+
+  const activeOnlineClients = useMemo(
+    () => state.onlineClients.filter((client) => !client.archived),
+    [state.onlineClients],
+  )
+
+  const archivedOnlineClients = useMemo(
+    () => state.onlineClients.filter((client) => client.archived),
+    [state.onlineClients],
+  )
 
   const accountSummary = useMemo(() => {
     if (!isSupabaseConfigured) {
@@ -665,11 +670,23 @@ function App() {
       return
     }
 
-    const stillExists = state.inPersonClients.some((client) => client.id === quickClientId)
+    const stillExists = activeInPersonClients.some((client) => client.id === quickClientId)
     if (!stillExists) {
       setQuickClientId('')
     }
-  }, [quickClientId, state.inPersonClients])
+  }, [quickClientId, activeInPersonClients])
+
+  useEffect(() => {
+    if (historyItems.length === 0) {
+      setSelectedHistoryId('')
+      return
+    }
+
+    const exists = historyItems.some((item) => item.id === selectedHistoryId)
+    if (!exists) {
+      setSelectedHistoryId(historyItems[0].id)
+    }
+  }, [historyItems, selectedHistoryId])
 
   const addInPersonClient = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -687,6 +704,7 @@ function App() {
           id: makeId(),
           name,
           bankedSessions: [],
+          archived: false,
         },
       ],
     }))
@@ -766,16 +784,39 @@ function App() {
   const removeInPersonClient = (clientId: string) => {
     setState((current) => ({
       ...current,
-      inPersonClients: current.inPersonClients.filter(
-        (client) => client.id !== clientId,
+      inPersonClients: current.inPersonClients.map((client) =>
+        client.id === clientId ? { ...client, archived: true } : client,
       ),
+    }))
+    setMessage('Client archived')
+  }
+
+  const restoreInPersonClient = (clientId: string) => {
+    setState((current) => ({
+      ...current,
+      inPersonClients: current.inPersonClients.map((client) =>
+        client.id === clientId ? { ...client, archived: false } : client,
+      ),
+    }))
+    setMessage('Client restored')
+  }
+
+  const deleteInPersonClientPermanently = (clientId: string) => {
+    if (!requireTypedConfirmation('permanently delete this in-person client', 'DELETE')) {
+      setMessage('Delete cancelled')
+      return
+    }
+
+    setState((current) => ({
+      ...current,
+      inPersonClients: current.inPersonClients.filter((client) => client.id !== clientId),
     }))
     setBankDateByClient((current) => {
       const next = { ...current }
       delete next[clientId]
       return next
     })
-    setMessage('Removed in-person client')
+    setMessage('In-person client permanently deleted')
   }
 
   const addOnlineClient = (event: FormEvent<HTMLFormElement>) => {
@@ -795,6 +836,7 @@ function App() {
           name,
           lastCallOn: onlineLastCallOn,
           notes: onlineNotes.trim(),
+          archived: false,
         },
       ],
     }))
@@ -819,50 +861,39 @@ function App() {
   const removeOnlineClient = (clientId: string) => {
     setState((current) => ({
       ...current,
-      onlineClients: current.onlineClients.filter((client) => client.id !== clientId),
+      onlineClients: current.onlineClients.map((client) =>
+        client.id === clientId ? { ...client, archived: true } : client,
+      ),
     }))
-    setMessage('Removed online client')
+    setMessage('Online client archived')
   }
 
-  const addScheduleEntry = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const clientName = scheduleClientName.trim()
+  const restoreOnlineClient = (clientId: string) => {
+    setState((current) => ({
+      ...current,
+      onlineClients: current.onlineClients.map((client) =>
+        client.id === clientId ? { ...client, archived: false } : client,
+      ),
+    }))
+    setMessage('Online client restored')
+  }
 
-    if (!clientName) {
+  const deleteOnlineClientPermanently = (clientId: string) => {
+    if (!requireTypedConfirmation('permanently delete this online client', 'DELETE')) {
+      setMessage('Delete cancelled')
       return
     }
 
     setState((current) => ({
       ...current,
-      schedule: [
-        ...current.schedule,
-        {
-          id: makeId(),
-          clientName,
-          day: scheduleDay,
-          time: scheduleTime,
-          notes: scheduleNotes.trim(),
-        },
-      ],
+      onlineClients: current.onlineClients.filter((client) => client.id !== clientId),
     }))
-
-    setScheduleClientName('')
-    setScheduleNotes('')
-    setScheduleDay('Tuesday')
-    setScheduleTime('09:00')
-    setMessage(`Added schedule slot for ${clientName}`)
-  }
-
-  const removeScheduleEntry = (entryId: string) => {
-    setState((current) => ({
-      ...current,
-      schedule: current.schedule.filter((entry) => entry.id !== entryId),
-    }))
-    setMessage('Removed schedule slot')
+    setMessage('Online client permanently deleted')
   }
 
   const clearAllData = () => {
-    if (!window.confirm('Clear all clients and schedule data?')) {
+    if (!requireTypedConfirmation('clear all tracker data', 'RESET')) {
+      setMessage('Reset cancelled')
       return
     }
     setState(initialState)
@@ -914,7 +945,7 @@ function App() {
         return
       }
 
-      setState(dataCandidate)
+      setState(normalizeState(dataCandidate))
       setMessage('Backup imported successfully')
     } catch {
       setMessage('Could not import backup file')
@@ -941,6 +972,7 @@ function App() {
           id: makeId(),
           name,
           bankedSessions: [],
+          archived: false,
         })),
       ],
     }))
@@ -1005,7 +1037,8 @@ function App() {
   }
 
   const deleteBankSession = (clientId: string, sessionId: string) => {
-    if (!window.confirm('Delete this banked session?')) {
+    if (!requireTypedConfirmation('delete this banked session', 'DELETE')) {
+      setMessage('Delete cancelled')
       return
     }
 
@@ -1059,6 +1092,15 @@ function App() {
 
     setEditingOnlineClient(null)
     setMessage('Online client updated')
+  }
+
+  const restoreSelectedCloudHistory = () => {
+    const selectedItem = historyItems.find((item) => item.id === selectedHistoryId)
+    if (!selectedItem) {
+      return
+    }
+
+    restoreCloudHistoryItem(selectedItem)
   }
 
   const sendMagicLink = async (event: FormEvent<HTMLFormElement>) => {
@@ -1235,11 +1277,11 @@ function App() {
   return (
     <main className="app-shell">
       <header className="top-hero">
-        <p className="eyebrow">christiemitchellpt planner</p>
-        <h1>Hey Christie, here's your week.</h1>
+        <p className="eyebrow">christiemitchellpt tracker</p>
+        <h1>Hey Christie, here's your client tracker.</h1>
         <p className="intro">
-          One place to track banked sessions, monthly online calls, and your
-          Tuesday/Friday diary.
+          One place to track banked sessions, monthly online calls, and safe
+          backups.
         </p>
         <div className="hero-motion" aria-hidden="true">
           <span className="motion-chip electric"></span>
@@ -1339,189 +1381,198 @@ function App() {
 
       {showAccountPanel ? (
         <section className="panel">
-        <div className="panel-header">
-          <h2>Login and backups</h2>
-          <p>
-            Everything saves in this browser. Cloud sync keeps a second copy so
-            nothing gets lost.
-          </p>
-        </div>
-
-        {!isSupabaseConfigured ? (
-          <div className="cloud-box">
-            <p className="muted">
-              Cloud sync is off. Add VITE_SUPABASE_URL and
-              VITE_SUPABASE_ANON_KEY in .env to turn on sign-in and auto backup.
+          <div className="panel-header">
+            <h2>Login and backups</h2>
+            <p>
+              Everything saves in this browser. Cloud sync keeps a second copy so
+              nothing gets lost.
             </p>
           </div>
-        ) : (
-          <div className="cloud-box">
-            {OWNER_EMAIL ? (
-              <p className="muted owner-note">Owner account: {OWNER_EMAIL}</p>
-            ) : null}
-            {cloudUserEmail ? (
-              <>
-                <p>
-                  Signed in as <strong>{cloudUserEmail}</strong>
-                </p>
-                <div className="status-row">
-                  <button type="button" className="ghost" onClick={pullLatestFromCloud}>
-                    Pull latest backup
-                  </button>
-                  <button type="button" className="ghost" onClick={signOutCloud}>
-                    Sign out
-                  </button>
-                </div>
 
-                {historyItems.length > 0 ? (
-                  <div className="restore-list">
-                    <p className="muted">Recent restore points</p>
-                    <ul>
-                      {historyItems.map((item) => (
-                        <li key={item.id}>
-                          <button
-                            type="button"
-                            className="ghost small"
-                            onClick={() => restoreCloudHistoryItem(item)}
-                          >
-                            Restore {new Date(item.created_at).toLocaleString('en-GB')}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
+          {!isSupabaseConfigured ? (
+            <div className="cloud-box">
+              <p className="muted">
+                Cloud sync is off. Add VITE_SUPABASE_URL and
+                VITE_SUPABASE_ANON_KEY in .env to turn on sign-in and auto backup.
+              </p>
+            </div>
+          ) : (
+            <div className="cloud-box">
+              {OWNER_EMAIL ? (
+                <p className="muted owner-note">Owner account: {OWNER_EMAIL}</p>
+              ) : null}
+              {cloudUserEmail ? (
+                <>
+                  <p>
+                    Signed in as <strong>{cloudUserEmail}</strong>
+                  </p>
+                  <div className="status-row">
+                    <button type="button" className="ghost" onClick={pullLatestFromCloud}>
+                      Pull latest backup
+                    </button>
+                    <button type="button" className="ghost" onClick={signOutCloud}>
+                      Sign out
+                    </button>
                   </div>
-                ) : null}
-              </>
-            ) : (
-              <>
-                <div className="auth-toggle" role="tablist" aria-label="Auth method">
-                  <button
-                    type="button"
-                    className={authMode === 'password' ? 'tab active' : 'tab'}
-                    onClick={() => setAuthMode('password')}
-                  >
-                    Password sign-in
-                  </button>
-                  {showAdvancedAuth ? (
+
+                  {historyItems.length > 0 ? (
+                    <div className="restore-list">
+                      <p className="muted">Restore from cloud history</p>
+                      <div className="inline-form cloud-form">
+                        <label>
+                          Restore point
+                          <select
+                            value={selectedHistoryId}
+                            onChange={(event) => setSelectedHistoryId(event.target.value)}
+                          >
+                            {historyItems.map((item) => (
+                              <option key={item.id} value={item.id}>
+                                {new Date(item.created_at).toLocaleString('en-GB')}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={restoreSelectedCloudHistory}
+                        >
+                          Restore selected backup
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <div className="auth-toggle" role="tablist" aria-label="Auth method">
                     <button
                       type="button"
-                      className={authMode === 'magic-link' ? 'tab active' : 'tab'}
-                      onClick={() => setAuthMode('magic-link')}
+                      className={authMode === 'password' ? 'tab active' : 'tab'}
+                      onClick={() => setAuthMode('password')}
                     >
-                      Magic link
+                      Password sign-in
                     </button>
-                  ) : null}
-                </div>
+                    {showAdvancedAuth ? (
+                      <button
+                        type="button"
+                        className={authMode === 'magic-link' ? 'tab active' : 'tab'}
+                        onClick={() => setAuthMode('magic-link')}
+                      >
+                        Magic link
+                      </button>
+                    ) : null}
+                  </div>
 
-                {authMode === 'password' ? (
-                  <div className="auth-stack">
-                    <form className="inline-form auth-form" onSubmit={signInWithPassword}>
+                  {authMode === 'password' ? (
+                    <div className="auth-stack">
+                      <form className="inline-form auth-form" onSubmit={signInWithPassword}>
+                        <label>
+                          Email
+                          <input
+                            type="email"
+                            value={cloudEmail}
+                            onChange={(event) => setCloudEmail(event.target.value)}
+                            placeholder="trainer@email.com"
+                            autoComplete="username"
+                            required
+                          />
+                        </label>
+                        <label>
+                          Password
+                          <input
+                            type="password"
+                            value={cloudPassword}
+                            onChange={(event) => setCloudPassword(event.target.value)}
+                            autoComplete="current-password"
+                            required
+                          />
+                        </label>
+                        <button type="submit">Sign in</button>
+                      </form>
+
+                      <form className="inline-form auth-form" onSubmit={createPasswordAccount}>
+                        <label>
+                          Confirm password
+                          <input
+                            type="password"
+                            value={cloudConfirmPassword}
+                            onChange={(event) => setCloudConfirmPassword(event.target.value)}
+                            autoComplete="new-password"
+                            required
+                          />
+                        </label>
+                        <button type="submit" className="ghost">
+                          Create account
+                        </button>
+                      </form>
+
+                      <form className="inline-form cloud-form" onSubmit={sendPasswordReset}>
+                        <label>
+                          Forgot password email
+                          <input
+                            type="email"
+                            value={passwordResetEmail}
+                            onChange={(event) => setPasswordResetEmail(event.target.value)}
+                            placeholder="owner@email.com"
+                            autoComplete="email"
+                            required
+                          />
+                        </label>
+                        <button type="submit" className="ghost">
+                          Send reset link
+                        </button>
+                      </form>
+                    </div>
+                  ) : (
+                    <form className="inline-form cloud-form" onSubmit={sendMagicLink}>
                       <label>
-                        Email
+                        Email for cloud sync
                         <input
                           type="email"
                           value={cloudEmail}
                           onChange={(event) => setCloudEmail(event.target.value)}
                           placeholder="trainer@email.com"
-                          autoComplete="username"
-                          required
-                        />
-                      </label>
-                      <label>
-                        Password
-                        <input
-                          type="password"
-                          value={cloudPassword}
-                          onChange={(event) => setCloudPassword(event.target.value)}
-                          autoComplete="current-password"
-                          required
-                        />
-                      </label>
-                      <button type="submit">Sign in</button>
-                    </form>
-
-                    <form className="inline-form auth-form" onSubmit={createPasswordAccount}>
-                      <label>
-                        Confirm password
-                        <input
-                          type="password"
-                          value={cloudConfirmPassword}
-                          onChange={(event) => setCloudConfirmPassword(event.target.value)}
-                          autoComplete="new-password"
-                          required
-                        />
-                      </label>
-                      <button type="submit" className="ghost">
-                        Create account
-                      </button>
-                    </form>
-
-                    <form className="inline-form cloud-form" onSubmit={sendPasswordReset}>
-                      <label>
-                        Forgot password email
-                        <input
-                          type="email"
-                          value={passwordResetEmail}
-                          onChange={(event) => setPasswordResetEmail(event.target.value)}
-                          placeholder="owner@email.com"
                           autoComplete="email"
                           required
                         />
                       </label>
-                      <button type="submit" className="ghost">
-                        Send reset link
-                      </button>
+                      <button type="submit">Send magic link</button>
                     </form>
-                  </div>
-                ) : (
-                  <form className="inline-form cloud-form" onSubmit={sendMagicLink}>
-                    <label>
-                      Email for cloud sync
-                      <input
-                        type="email"
-                        value={cloudEmail}
-                        onChange={(event) => setCloudEmail(event.target.value)}
-                        placeholder="trainer@email.com"
-                        autoComplete="email"
-                        required
-                      />
-                    </label>
-                    <button type="submit">Send magic link</button>
-                  </form>
-                )}
+                  )}
 
-                <button
-                  type="button"
-                  className="ghost small"
-                  onClick={() => {
-                    setShowAdvancedAuth((value) => !value)
-                    setAuthMode('password')
-                  }}
-                >
-                  {showAdvancedAuth ? 'Hide advanced options' : 'Show advanced options'}
-                </button>
+                  <button
+                    type="button"
+                    className="ghost small"
+                    onClick={() => {
+                      setShowAdvancedAuth((value) => !value)
+                      setAuthMode('password')
+                    }}
+                  >
+                    {showAdvancedAuth ? 'Hide advanced options' : 'Show advanced options'}
+                  </button>
 
-                {showAdvancedAuth ? (
-                  <p className="muted">Magic link can be rate-limited. Use password sign-in for daily use.</p>
-                ) : null}
-              </>
-            )}
+                  {showAdvancedAuth ? (
+                    <p className="muted">Magic link can be rate-limited. Use password sign-in for daily use.</p>
+                  ) : null}
+                </>
+              )}
 
-            <p className="muted">
-              Cloud status:{' '}
-              <strong>
-                {cloudLoading
-                  ? 'Syncing...'
-                  : cloudUserId
-                    ? 'Signed in and auto-saving'
-                    : 'Not signed in'}
-              </strong>
-              {lastCloudSyncAt
-                ? ` | Last sync: ${new Date(lastCloudSyncAt).toLocaleString('en-GB')}`
-                : ''}
-            </p>
-          </div>
-        )}
+              <p className="muted">
+                Cloud status:{' '}
+                <strong>
+                  {cloudLoading
+                    ? 'Syncing...'
+                    : cloudUserId
+                      ? 'Signed in and auto-saving'
+                      : 'Not signed in'}
+                </strong>
+                {lastCloudSyncAt
+                  ? ` | Last sync: ${new Date(lastCloudSyncAt).toLocaleString('en-GB')}`
+                  : ''}
+              </p>
+            </div>
+          )}
         </section>
       ) : null}
 
@@ -1584,7 +1635,7 @@ function App() {
               onChange={(event) => setQuickClientId(event.target.value)}
             >
               <option value="">Pick client</option>
-              {state.inPersonClients.map((client) => (
+              {activeInPersonClients.map((client) => (
                 <option key={client.id} value={client.id}>
                   {client.name}
                 </option>
@@ -1613,10 +1664,10 @@ function App() {
         ) : null}
 
         <div className="client-grid">
-          {state.inPersonClients.length === 0 ? (
+          {activeInPersonClients.length === 0 ? (
             <p className="empty">No in-person clients yet.</p>
           ) : (
-            state.inPersonClients.map((client) => {
+            activeInPersonClients.map((client) => {
               const activeSessions = client.bankedSessions.filter(
                 (session) => !session.usedOn && !isExpired(session.expiresOn),
               )
@@ -1645,7 +1696,7 @@ function App() {
                       className="ghost small"
                       onClick={() => removeInPersonClient(client.id)}
                     >
-                      Remove
+                      Archive
                     </button>
                   </div>
 
@@ -1794,6 +1845,37 @@ function App() {
             })
           )}
         </div>
+
+        {archivedInPersonClients.length > 0 ? (
+          <div className="archived-block">
+            <p className="muted">Archived in-person clients</p>
+            <div className="client-grid">
+              {archivedInPersonClients.map((client) => (
+                <article key={client.id} className="client-card archived-card">
+                  <div className="client-row">
+                    <h3>{client.name}</h3>
+                    <div className="button-row">
+                      <button
+                        type="button"
+                        className="ghost small"
+                        onClick={() => restoreInPersonClient(client.id)}
+                      >
+                        Restore
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost small"
+                        onClick={() => deleteInPersonClientPermanently(client.id)}
+                      >
+                        Delete forever
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <section className="panel">
@@ -1833,10 +1915,10 @@ function App() {
         </form>
 
         <div className="client-grid">
-          {state.onlineClients.length === 0 ? (
+          {activeOnlineClients.length === 0 ? (
             <p className="empty">No online clients yet.</p>
           ) : (
-            state.onlineClients.map((client) => {
+            activeOnlineClients.map((client) => {
               const nextDue = addMonths(client.lastCallOn, 1)
               const deltaDays = daysUntil(nextDue)
               const statusClass =
@@ -1882,7 +1964,7 @@ function App() {
                         className="ghost small"
                         onClick={() => removeOnlineClient(client.id)}
                       >
-                        Remove
+                        Archive
                       </button>
                     </div>
                   </div>
@@ -1964,83 +2046,37 @@ function App() {
             })
           )}
         </div>
-      </section>
 
-      <section className="panel">
-        <div className="panel-header">
-          <h2>Tuesday + Friday schedule</h2>
-          <p>Your week laid out clearly, sorted by time.</p>
-        </div>
-
-        <form className="inline-form schedule-form" onSubmit={addScheduleEntry}>
-          <label>
-            Client
-            <input
-              value={scheduleClientName}
-              onChange={(event) => setScheduleClientName(event.target.value)}
-              placeholder="Client name"
-              required
-            />
-          </label>
-          <label>
-            Day
-            <select
-              value={scheduleDay}
-              onChange={(event) => setScheduleDay(event.target.value as DayOfWork)}
-            >
-              <option value="Tuesday">Tuesday</option>
-              <option value="Friday">Friday</option>
-            </select>
-          </label>
-          <label>
-            Time
-            <input
-              type="time"
-              value={scheduleTime}
-              onChange={(event) => setScheduleTime(event.target.value)}
-              required
-            />
-          </label>
-          <label>
-            Notes
-            <input
-              value={scheduleNotes}
-              onChange={(event) => setScheduleNotes(event.target.value)}
-              placeholder="Gym floor / online warm-up / etc"
-            />
-          </label>
-          <button type="submit">Add slot</button>
-        </form>
-
-        <div className="week-grid">
-          {(['Tuesday', 'Friday'] as DayOfWork[]).map((day) => (
-            <article key={day} className="day-column">
-              <h3>{day}</h3>
-              {groupedSchedule[day].length === 0 ? (
-                <p className="empty">No sessions planned.</p>
-              ) : (
-                <ul>
-                  {groupedSchedule[day].map((entry) => (
-                    <li key={entry.id}>
-                      <div>
-                        <strong>{entry.time}</strong>
-                        <p>{entry.clientName}</p>
-                        {entry.notes ? <small>{entry.notes}</small> : null}
-                      </div>
+        {archivedOnlineClients.length > 0 ? (
+          <div className="archived-block">
+            <p className="muted">Archived online clients</p>
+            <div className="client-grid">
+              {archivedOnlineClients.map((client) => (
+                <article key={client.id} className="client-card archived-card">
+                  <div className="client-row">
+                    <h3>{client.name}</h3>
+                    <div className="button-row">
                       <button
                         type="button"
                         className="ghost small"
-                        onClick={() => removeScheduleEntry(entry.id)}
+                        onClick={() => restoreOnlineClient(client.id)}
                       >
-                        Remove
+                        Restore
                       </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </article>
-          ))}
-        </div>
+                      <button
+                        type="button"
+                        className="ghost small"
+                        onClick={() => deleteOnlineClientPermanently(client.id)}
+                      >
+                        Delete forever
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </section>
     </main>
   )

@@ -6,7 +6,7 @@ A focused planner for personal training businesses:
   - max 4 active banked sessions per client
   - each banked session expires after 3 months
 - Online clients with monthly call due tracking
-- Tuesday/Friday weekly schedule planner
+- Client archive flow (restore or permanent delete)
 - Built-in data protection:
   - continuous local autosave
   - manual export/import backup
@@ -85,7 +85,7 @@ After sign-in, app state is auto-saved to cloud and can be pulled to recover.
 ### Restore points
 
 - The app keeps the latest cloud copy and also stores daily restore points.
-- In "Login and backups", use "Recent restore points" to roll back if needed.
+- In "Login and backups", choose a restore point and use "Restore selected backup" to roll back if needed.
 
 ### Recommended daily use for one business owner
 
