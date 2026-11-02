@@ -260,6 +260,7 @@ function App() {
   const [showAccountPanel, setShowAccountPanel] = useState(false)
   const [showAddClientForm, setShowAddClientForm] = useState(false)
   const [showBulkAddForm, setShowBulkAddForm] = useState(false)
+  const [expandedInPersonById, setExpandedInPersonById] = useState<Record<string, boolean>>({})
   const [cloudEmail, setCloudEmail] = useState('')
   const [cloudPassword, setCloudPassword] = useState('')
   const [cloudConfirmPassword, setCloudConfirmPassword] = useState('')
@@ -677,6 +678,24 @@ function App() {
   }, [quickClientId, activeInPersonClients])
 
   useEffect(() => {
+    setExpandedInPersonById((current) => {
+      const activeIds = new Set(activeInPersonClients.map((client) => client.id))
+      let changed = false
+      const next: Record<string, boolean> = {}
+
+      Object.entries(current).forEach(([clientId, isExpanded]) => {
+        if (activeIds.has(clientId)) {
+          next[clientId] = isExpanded
+        } else {
+          changed = true
+        }
+      })
+
+      return changed ? next : current
+    })
+  }, [activeInPersonClients])
+
+  useEffect(() => {
     if (historyItems.length === 0) {
       setSelectedHistoryId('')
       return
@@ -715,6 +734,7 @@ function App() {
 
   const bankSession = (clientId: string, bankedOnInput?: string) => {
     const bankedOn = bankedOnInput || todayIso()
+    let wasBanked = false
 
     setState((current) => ({
       ...current,
@@ -739,6 +759,7 @@ function App() {
           bankedOn,
           expiresOn: addMonths(bankedOn, 3),
         }
+        wasBanked = true
 
         setMessage(`Banked 1 session for ${client.name}`)
 
@@ -748,6 +769,10 @@ function App() {
         }
       }),
     }))
+
+    if (wasBanked) {
+      setExpandedInPersonById((current) => ({ ...current, [clientId]: true }))
+    }
   }
 
   const useOldestBankedSession = (clientId: string) => {
@@ -991,6 +1016,7 @@ function App() {
   }
 
   const startEditingBankSession = (clientId: string, session: BankedSession) => {
+    setExpandedInPersonById((current) => ({ ...current, [clientId]: true }))
     setEditingBankSession({
       clientId,
       sessionId: session.id,
@@ -1674,6 +1700,23 @@ function App() {
               const expiredSessions = client.bankedSessions.filter(
                 (session) => !session.usedOn && isExpired(session.expiresOn),
               )
+              const oldestExpiringSession = activeSessions
+                .slice()
+                .sort((a, b) => a.expiresOn.localeCompare(b.expiresOn))[0]
+              const daysUntilOldestExpiry = oldestExpiringSession
+                ? daysUntil(oldestExpiringSession.expiresOn)
+                : null
+              const oldestExpiryText =
+                daysUntilOldestExpiry === null
+                  ? 'No available banked sessions right now.'
+                  : daysUntilOldestExpiry < 0
+                    ? `${Math.abs(daysUntilOldestExpiry)} day${
+                        Math.abs(daysUntilOldestExpiry) === 1 ? '' : 's'
+                      } overdue`
+                    : daysUntilOldestExpiry === 0
+                      ? 'today'
+                      : `in ${daysUntilOldestExpiry} day${daysUntilOldestExpiry === 1 ? '' : 's'}`
+              const isExpanded = Boolean(expandedInPersonById[client.id])
 
               return (
                 <article
@@ -1705,140 +1748,178 @@ function App() {
                     unused: <strong>{expiredSessions.length}</strong>
                   </p>
 
-                  <div className="banking-row">
-                    <label>
-                      Banked on date
-                      <input
-                        type="date"
-                        value={bankDateByClient[client.id] || todayIso()}
-                        onChange={(event) =>
-                          setBankDateByClient((current) => ({
-                            ...current,
-                            [client.id]: event.target.value,
-                          }))
-                        }
-                      />
-                    </label>
-                  </div>
+                  <p className="mini-stats compact-note">
+                    {oldestExpiringSession ? (
+                      <>
+                        Next expiry: <strong>{formatDate(oldestExpiringSession.expiresOn)}</strong>{' '}
+                        ({oldestExpiryText})
+                      </>
+                    ) : (
+                      oldestExpiryText
+                    )}
+                  </p>
 
-                  <div className="button-row">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        bankSession(client.id, bankDateByClient[client.id] || todayIso())
-                      }
-                    >
-                      Bank 1 session
+                  <div className="button-row compact-actions">
+                    <button type="button" onClick={() => bankSession(client.id, todayIso())}>
+                      Bank session today
                     </button>
                     <button
                       type="button"
                       className="ghost"
                       onClick={() => useOldestBankedSession(client.id)}
                     >
-                      Use oldest banked session
+                      Use oldest session
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost details-toggle"
+                      onClick={() => {
+                        setExpandedInPersonById((current) => ({
+                          ...current,
+                          [client.id]: !current[client.id],
+                        }))
+
+                        if (isExpanded && editingBankSession?.clientId === client.id) {
+                          setEditingBankSession(null)
+                        }
+                      }}
+                    >
+                      Session details
+                      <span className={isExpanded ? 'toggle-caret open' : 'toggle-caret'} aria-hidden="true"></span>
                     </button>
                   </div>
 
-                  {client.bankedSessions.length > 0 ? (
-                    <ul className="session-list">
-                      {client.bankedSessions
-                        .slice()
-                        .sort((a, b) => a.bankedOn.localeCompare(b.bankedOn))
-                        .map((session) => {
-                          const expired = !session.usedOn && isExpired(session.expiresOn)
-                          const isEditingSession =
-                            editingBankSession?.clientId === client.id &&
-                            editingBankSession?.sessionId === session.id
+                  {isExpanded ? (
+                    <div className="client-details">
+                      <div className="banking-row">
+                        <label>
+                          Banked on date
+                          <input
+                            type="date"
+                            value={bankDateByClient[client.id] || todayIso()}
+                            onChange={(event) =>
+                              setBankDateByClient((current) => ({
+                                ...current,
+                                [client.id]: event.target.value,
+                              }))
+                            }
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={() =>
+                            bankSession(client.id, bankDateByClient[client.id] || todayIso())
+                          }
+                        >
+                          Bank using selected date
+                        </button>
+                      </div>
 
-                          return (
-                            <li key={session.id}>
-                              <div className="session-main">
-                                <span>
-                                  Banked {formatDate(session.bankedOn)} - expires{' '}
-                                  {formatDate(session.expiresOn)}
-                                </span>
-                                <strong
-                                  className={
-                                    session.usedOn
-                                      ? 'badge success'
-                                      : expired
-                                        ? 'badge danger'
-                                        : 'badge neutral'
-                                  }
-                                >
-                                  {session.usedOn
-                                    ? `Used ${formatDate(session.usedOn)}`
-                                    : expired
-                                      ? 'Expired'
-                                      : 'Available'}
-                                </strong>
-                              </div>
+                      {client.bankedSessions.length > 0 ? (
+                        <ul className="session-list">
+                          {client.bankedSessions
+                            .slice()
+                            .sort((a, b) => a.bankedOn.localeCompare(b.bankedOn))
+                            .map((session) => {
+                              const expired = !session.usedOn && isExpired(session.expiresOn)
+                              const isEditingSession =
+                                editingBankSession?.clientId === client.id &&
+                                editingBankSession?.sessionId === session.id
 
-                              <div className="session-actions">
-                                <button
-                                  type="button"
-                                  className="ghost small"
-                                  onClick={() => startEditingBankSession(client.id, session)}
-                                >
-                                  Edit
-                                </button>
-                                <button
-                                  type="button"
-                                  className="ghost small"
-                                  onClick={() => deleteBankSession(client.id, session.id)}
-                                >
-                                  Delete
-                                </button>
-                              </div>
-
-                              {isEditingSession ? (
-                                <div className="session-edit">
-                                  <label>
-                                    Banked on
-                                    <input
-                                      type="date"
-                                      value={editingBankSession.bankedOn}
-                                      onChange={(event) =>
-                                        setEditingBankSession((current) =>
-                                          current
-                                            ? { ...current, bankedOn: event.target.value }
-                                            : current,
-                                        )
+                              return (
+                                <li key={session.id}>
+                                  <div className="session-main">
+                                    <span>
+                                      Banked {formatDate(session.bankedOn)} - expires{' '}
+                                      {formatDate(session.expiresOn)}
+                                    </span>
+                                    <strong
+                                      className={
+                                        session.usedOn
+                                          ? 'badge success'
+                                          : expired
+                                            ? 'badge danger'
+                                            : 'badge neutral'
                                       }
-                                    />
-                                  </label>
-                                  <label>
-                                    Used on (optional)
-                                    <input
-                                      type="date"
-                                      value={editingBankSession.usedOn}
-                                      onChange={(event) =>
-                                        setEditingBankSession((current) =>
-                                          current
-                                            ? { ...current, usedOn: event.target.value }
-                                            : current,
-                                        )
-                                      }
-                                    />
-                                  </label>
-                                  <div className="button-row">
-                                    <button type="button" className="ghost small" onClick={saveEditingBankSession}>
-                                      Save
+                                    >
+                                      {session.usedOn
+                                        ? `Used ${formatDate(session.usedOn)}`
+                                        : expired
+                                          ? 'Expired'
+                                          : 'Available'}
+                                    </strong>
+                                  </div>
+
+                                  <div className="session-actions">
+                                    <button
+                                      type="button"
+                                      className="ghost small"
+                                      onClick={() => startEditingBankSession(client.id, session)}
+                                    >
+                                      Edit
                                     </button>
                                     <button
                                       type="button"
                                       className="ghost small"
-                                      onClick={() => setEditingBankSession(null)}
+                                      onClick={() => deleteBankSession(client.id, session.id)}
                                     >
-                                      Cancel
+                                      Delete
                                     </button>
                                   </div>
-                                </div>
-                              ) : null}
-                            </li>
-                          )
-                        })}
-                    </ul>
+
+                                  {isEditingSession ? (
+                                    <div className="session-edit">
+                                      <label>
+                                        Banked on
+                                        <input
+                                          type="date"
+                                          value={editingBankSession.bankedOn}
+                                          onChange={(event) =>
+                                            setEditingBankSession((current) =>
+                                              current
+                                                ? { ...current, bankedOn: event.target.value }
+                                                : current,
+                                            )
+                                          }
+                                        />
+                                      </label>
+                                      <label>
+                                        Used on (optional)
+                                        <input
+                                          type="date"
+                                          value={editingBankSession.usedOn}
+                                          onChange={(event) =>
+                                            setEditingBankSession((current) =>
+                                              current
+                                                ? { ...current, usedOn: event.target.value }
+                                                : current,
+                                            )
+                                          }
+                                        />
+                                      </label>
+                                      <div className="button-row">
+                                        <button type="button" className="ghost small" onClick={saveEditingBankSession}>
+                                          Save
+                                        </button>
+                                        <button
+                                          type="button"
+                                          className="ghost small"
+                                          onClick={() => setEditingBankSession(null)}
+                                        >
+                                          Cancel
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : null}
+                                </li>
+                              )
+                            })}
+                        </ul>
+                      ) : (
+                        <p className="empty">No banked sessions for this client yet.</p>
+                      )}
+                    </div>
                   ) : null}
                 </article>
               )
