@@ -1,0 +1,54 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
+:root {
+  --bg: #faf9f6;
+  --text: #102339;
+  --muted: #4b6078;
+  --surface: #ffffff;
+  --surface-soft: #fbfaf8;
+  --border: #ddd7cb;
+  --border-strong: #c9c0b1;
+
+  --electric: #1f6bff;
+  --electric-deep: #0c4ee3;
+  --electric-soft: #e8f0ff;
+
+  --sage: #6f9a86;
+  --sage-deep: #4f7f69;
+  --sage-soft: #e8f2ed;
+
+  font-family: 'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', 'Helvetica Neue', Arial,
+    sans-serif;
+  line-height: 1.45;
+  font-weight: 400;
+  color: var(--text);
+  background: var(--bg);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100svh;
+  background: linear-gradient(180deg, #fdfcf9 0%, #f7f5ef 100%);
+}
+
+#root {
+  max-width: 1120px;
+  margin: 0 auto;
+  min-height: 100svh;
+}
+
+h1,
+h2,
+h3 {
+  font-family: 'Plus Jakarta Sans', 'Avenir Next', 'Segoe UI', 'Helvetica Neue',
+    Arial, sans-serif;
+  letter-spacing: -0.01em;
+  color: #0f2742;
+}
